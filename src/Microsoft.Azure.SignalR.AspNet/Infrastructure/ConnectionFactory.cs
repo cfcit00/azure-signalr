@@ -9,6 +9,7 @@ using Microsoft.AspNet.SignalR;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Http.Connections.Client;
+using Microsoft.Azure.SignalR.Common;
 using Microsoft.Azure.SignalR.Protocol;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -28,35 +29,46 @@ namespace Microsoft.Azure.SignalR.AspNet
         private readonly IServiceConnectionManager _serviceConnectionManager;
         private readonly IClientConnectionManager _clientConnectionManager;
         private readonly IServiceProtocol _protocol;
-        private readonly IServiceEndpointProvider _endpoint;
+        private readonly IServiceEndpointManager _serviceEndpointManager;
         private readonly string _name;
         private readonly string _userId;
         
         // Align the header key with ASP.Net core.
         private static Dictionary<string, string> CustomHeader = new Dictionary<string, string> { { "Asrs-User-Agent", ProductInfo.GetProductInfo() } };
 
-        public ConnectionFactory(IReadOnlyList<string> hubNames, HubConfiguration hubConfig, ILoggerFactory loggerFactory)
+        public ConnectionFactory(IReadOnlyList<string> hubNames, HubConfiguration hubConfig, IServiceProtocol protocol,
+            IServiceConnectionManager serviceConnectionManager, IClientConnectionManager clientConnectionManager,
+            IServiceEndpointManager serviceEndpointManager,
+            IOptions<ServiceOptions> options, ILoggerFactory loggerFactory)
         {
             _config = hubConfig;
             _hubNames = hubNames;
             _name = $"{nameof(ConnectionFactory)}[{string.Join(",", hubNames)}]";
             _userId = GenerateServerName();
             _loggerFactory = loggerFactory;
-            _protocol = hubConfig.Resolver.Resolve<IServiceProtocol>();
-            _serviceConnectionManager = hubConfig.Resolver.Resolve<IServiceConnectionManager>();
-            _clientConnectionManager = hubConfig.Resolver.Resolve<IClientConnectionManager>();
-            _endpoint = hubConfig.Resolver.Resolve<IServiceEndpointProvider>();
-            _options = hubConfig.Resolver.Resolve<IOptions<ServiceOptions>>().Value;
-
+            _protocol = protocol ?? throw new ArgumentNullException(nameof(protocol));
+            _serviceConnectionManager = serviceConnectionManager ?? throw new ArgumentNullException(nameof(serviceConnectionManager));
+            _clientConnectionManager = clientConnectionManager ?? throw new ArgumentNullException(nameof(clientConnectionManager));
+            _options = options?.Value;
+            _serviceEndpointManager = serviceEndpointManager ?? throw new ArgumentNullException(nameof(serviceEndpointManager));
             _logger = _loggerFactory.CreateLogger<ConnectionFactory>();
         }
 
         public async Task<ConnectionContext> ConnectAsync(TransferFormat transferFormat, string connectionId, string hubName, CancellationToken cancellationToken = default)
         {
+            var endpoints = _serviceEndpointManager.GetAvailableEndpoints();
+            if (endpoints.Count == 0)
+            {
+                throw new AzureSignalRException("No available endpoints.");
+            }
+
+            // TODO: support multiple endpoints
+            var provider = _serviceEndpointManager.GetEndpointProvider(endpoints[0]);
+
             var httpConnectionOptions = new HttpConnectionOptions
             {
-                Url = GetServiceUrl(connectionId, hubName),
-                AccessTokenProvider = () => Task.FromResult(_endpoint.GenerateServerAccessToken(hubName, _userId)),
+                Url = GetServiceUrl(connectionId, hubName, provider),
+                AccessTokenProvider = () => Task.FromResult(provider.GenerateServerAccessToken(hubName, _userId)),
                 Transports = HttpTransportType.WebSockets,
                 SkipNegotiation = true,
                 Headers = CustomHeader
@@ -95,9 +107,9 @@ namespace Microsoft.Azure.SignalR.AspNet
             return _serviceConnectionManager.StartAsync();
         }
 
-        private Uri GetServiceUrl(string connectionId, string hubName)
+        private Uri GetServiceUrl(string connectionId, string hubName, IServiceEndpointProvider provider)
         {
-            var baseUri = new UriBuilder(_endpoint.GetServerEndpoint(hubName));
+            var baseUri = new UriBuilder(provider.GetServerEndpoint(hubName));
             var query = "cid=" + connectionId;
             if (baseUri.Query != null && baseUri.Query.Length > 1)
             {

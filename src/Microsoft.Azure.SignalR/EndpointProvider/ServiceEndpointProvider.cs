@@ -4,18 +4,14 @@
 using System;
 using System.Collections.Generic;
 using System.Security.Claims;
-using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Options;
 
 namespace Microsoft.Azure.SignalR
 {
     internal class ServiceEndpointProvider : IServiceEndpointProvider
     {
-        private const string PreviewVersion = "1.0-preview";
-
-        private static readonly string ConnectionStringNotFound =
+        internal static readonly string ConnectionStringNotFound =
             "No connection string was specified. " +
-            $"Please specify a configuration entry for {ServiceOptions.ConnectionStringDefaultKey}, " +
+            $"Please specify a configuration entry for {Constants.ConnectionStringDefaultKey}, " +
             "or explicitly pass one using IServiceCollection.AddAzureSignalR(connectionString) in Startup.ConfigureServices.";
 
         private readonly string _endpoint;
@@ -23,28 +19,23 @@ namespace Microsoft.Azure.SignalR
         private readonly TimeSpan _accessTokenLifetime;
         private readonly IServiceEndpointGenerator _generator;
 
-        public ServiceEndpointProvider(IOptions<ServiceOptions> options)
+        public ServiceEndpointProvider(ServiceEndpoint endpoint, TimeSpan? ttl = null)
         {
-            var connectionString = options.Value.ConnectionString;
+            var connectionString = endpoint.ConnectionString;
             if (string.IsNullOrEmpty(connectionString))
             {
                 throw new ArgumentException(ConnectionStringNotFound);
             }
 
-            _accessTokenLifetime = options.Value.AccessTokenLifetime;
+            _accessTokenLifetime = ttl ?? Constants.DefaultAccessTokenLifetime;
 
-            string version;
-            int? port;
-            (_endpoint, _accessKey, version, port) = ConnectionStringParser.Parse(connectionString);
+            _endpoint = endpoint.Endpoint;
+            _accessKey = endpoint.AccessKey;
 
-            if (version == null || version == PreviewVersion)
-            {
-                _generator = new PreviewServiceEndpointGenerator(_endpoint, _accessKey);
-            }
-            else
-            {
-                _generator = new DefaultServiceEndpointGenerator(_endpoint, _accessKey, version, port);
-            }
+            var port = endpoint.Port;
+            var version = endpoint.Version;
+
+            _generator = new DefaultServiceEndpointGenerator(_endpoint, _accessKey, version, port);
         }
 
         public string GenerateClientAccessToken(string hubName, IEnumerable<Claim> claims = null, TimeSpan? lifetime = null, string requestId = null)

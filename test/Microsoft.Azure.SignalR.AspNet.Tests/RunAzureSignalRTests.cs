@@ -41,7 +41,6 @@ namespace Microsoft.Azure.SignalR.AspNet.Tests
                 var options = resolver.Resolve<IOptions<ServiceOptions>>();
                 Assert.Equal(ConnectionString, options.Value.ConnectionString);
                 Assert.IsType<ServiceHubDispatcher>(resolver.Resolve<PersistentConnection>());
-                Assert.IsType<ServiceEndpointProvider>(resolver.Resolve<IServiceEndpointProvider>());
                 Assert.IsType<ServiceConnectionManager>(resolver.Resolve<IServiceConnectionManager>());
                 Assert.IsType<EmptyProtectedData>(resolver.Resolve<IProtectedData>());
                 Assert.IsType<ServiceMessageBus>(resolver.Resolve<IMessageBus>());
@@ -61,6 +60,19 @@ namespace Microsoft.Azure.SignalR.AspNet.Tests
                     }
                 });
             Assert.StartsWith("No connection string was specified.", exception.Message);
+        }
+
+        [Fact]
+        public void TestRunAzureSignalRWithInvalidConnectionString()
+        {
+            var exception = Assert.Throws<ArgumentException>(
+                () =>
+                {
+                    using (WebApp.Start(ServiceUrl, app => app.RunAzureSignalR(AppName, "A=b;c=d")))
+                    {
+                    }
+                });
+            Assert.StartsWith("Connection string missing required properties endpoint and accesskey.", exception.Message);
         }
 
         [Fact]
@@ -142,6 +154,7 @@ namespace Microsoft.Azure.SignalR.AspNet.Tests
                 {
                     new Claim("user", "hello"),
                 };
+                options.AccessTokenLifetime = TimeSpan.FromDays(1);
             })))
             {
                 var client = new HttpClient { BaseAddress = new Uri(ServiceUrl) };
@@ -159,6 +172,7 @@ namespace Microsoft.Azure.SignalR.AspNet.Tests
                 Assert.Equal("hello", user);
                 var requestId = token.Claims.FirstOrDefault(s => s.Type == Constants.ClaimType.Id);
                 Assert.NotNull(requestId);
+                Assert.Equal(TimeSpan.FromDays(1), token.ValidTo - token.ValidFrom);
             }
         }
 
@@ -168,13 +182,13 @@ namespace Microsoft.Azure.SignalR.AspNet.Tests
 
             public  AppSettingsConfigScope(string setting)
             {
-                _originalSetting = ConfigurationManager.AppSettings[ServiceOptions.ConnectionStringDefaultKey];
-                ConfigurationManager.AppSettings[ServiceOptions.ConnectionStringDefaultKey] = setting;
+                _originalSetting = ConfigurationManager.AppSettings[Constants.ConnectionStringDefaultKey];
+                ConfigurationManager.AppSettings[Constants.ConnectionStringDefaultKey] = setting;
             }
 
             public void Dispose()
             {
-                ConfigurationManager.AppSettings[ServiceOptions.ConnectionStringDefaultKey] = _originalSetting;
+                ConfigurationManager.AppSettings[Constants.ConnectionStringDefaultKey] = _originalSetting;
             }
         }
 
